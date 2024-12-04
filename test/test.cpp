@@ -76,14 +76,8 @@ static inline void test_syntax() {
         std::cout << token << std::endl;
     }
     constexpr auto lr_table = std::get<1>(compiled);
-    using lr_table_t = decltype(lr_table);
-    std::cout << lr_table;
-    using first_set = lr_table_t::FirstSet;
-    std::cout << "FirstSet = " << first_set{};
-    using follow_set = lr_table_t::FollowSet;
-    std::cout << "FollowSet = " << follow_set{};
-    using item_set_collection = lr_table_t::ItemSetCollection;
-    std::cout << item_set_collection{}; 
+    std::cout << decltype(lr_table)::ItemSetCollection{} << std::endl;
+    std::cout << lr_table.lr_action_goto_table << std::endl;
 }
 
 int main() {

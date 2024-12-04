@@ -1,5 +1,6 @@
 #pragma once
 
+#include "slr_action.hpp"
 #include "type_map.hpp"
 #include "utils.hpp"
 #include <cstddef>
@@ -17,8 +18,8 @@ struct Terminal {
         return id != other.id;
     }
     friend std::ostream &operator<<(std::ostream &os, Terminal t) {
-        if (t.id == size_t(-1)) return os << "ε";
-        if (t.id == size_t(-2)) return os << "#";
+        if (t.id == size_t(-1)) return os << "#";
+        if (t.id == size_t(-2)) return os << "ε";
         return os << "T" << t.id;
     }
 };
@@ -34,8 +35,8 @@ struct NonTerminal {
         return os << "S" << t.id;
     }
 };
-static constexpr Terminal epsilon = Terminal{static_cast<size_t>(-1)};
-static constexpr Terminal sharp = Terminal{static_cast<size_t>(-2)};
+static constexpr Terminal sharp = Terminal{static_cast<size_t>(-1)};
+static constexpr Terminal epsilon = Terminal{static_cast<size_t>(-2)};
 constexpr bool operator==(Terminal, NonTerminal) noexcept { return false; }
 constexpr bool operator==(NonTerminal, Terminal) noexcept { return false; }
 constexpr bool operator!=(Terminal, NonTerminal) noexcept { return true; }
@@ -97,6 +98,14 @@ template <NonTerminal symbol, auto... exps> struct SimplifiedRule {
     template <auto... values>
     constexpr explicit SimplifiedRule(any_sequence<values...>) noexcept {}
 
+    static constexpr size_t max_token_id() noexcept {
+        size_t max_id = 0;
+        ((max_id = std::max(
+              max_id, std::is_same_v<decltype(exps), Terminal> ? exps.id : 0)),
+         ...);
+        return max_id;
+    }
+
     friend std::ostream &operator<<(std::ostream &os, SimplifiedRule rule) {
         os << rule.non_terminal << " ->";
         ((os << ' ' << exps), ...);
@@ -124,8 +133,16 @@ struct SimplifiedRuleTable {
         return max_id;
     }
 
+    static constexpr size_t max_token_id() noexcept {
+        size_t max_id = 0;
+        ((max_id = std::max(max_id, Rules::max_token_id())), ...);
+        return max_id;
+    }
+
     template <NonTerminal symbol>
     static constexpr auto get_rules_of() noexcept {
+        static_assert(((symbol == Rules::non_terminal) || ...),
+                      "undefined symbols...");
         return std::tuple_cat(
             std::conditional_t<symbol == Rules::non_terminal, std::tuple<Rules>,
                                std::tuple<>>{}...);
@@ -133,6 +150,8 @@ struct SimplifiedRuleTable {
 
     template <NonTerminal symbol>
     static constexpr auto get_items_of() noexcept {
+        static_assert(((symbol == Rules::non_terminal) || ...),
+                      "undefined symbols...");
         return std::tuple_cat(std::conditional_t<symbol == Rules::non_terminal,
                                                  std::tuple<LRItem<Rules, 0>>,
                                                  std::tuple<>>{}...);
@@ -328,6 +347,146 @@ struct SimplifiedRuleTable {
         decltype(ItemSetCollectionHelper::template calc<LRItemSetCollection<>,
                                                         StartClosure>());
 
+    struct IndexOfHelper {
+        template <typename rule> static constexpr auto index_of_impl() {
+            static_assert(sizeof(rule) == 0, "rule not found!");
+        }
+
+        template <typename rule, typename cur, typename... rest>
+        static constexpr auto index_of_impl() {
+            if constexpr (std::is_same_v<rule, cur>) {
+                return 0;
+            } else {
+                return 1 + index_of_impl<rule, rest...>();
+            }
+        }
+    };
+
+    template <typename rule> static constexpr auto index_of() noexcept {
+        return IndexOfHelper::template index_of_impl<rule, Rules...,
+                                                     extended_rule>();
+    }
+
+    static constexpr size_t state_size = ItemSetCollection::size();
+    static constexpr size_t token_size = max_token_id() + 1;
+    static constexpr size_t symbol_size = max_symbol_id() + 2;
+    using ActionTable = details::ActionTable<state_size, token_size>;
+    using GotoTable = details::GotoTable<state_size, symbol_size>;
+    using LRActionGotoTable =
+        details::LRActionGotoTable<state_size, token_size, symbol_size>;
+
+    struct GenerateActionGotoTableHelper {
+        template <LRActionGotoTable table, size_t idx>
+        static constexpr auto gen_impl_a(any_sequence<>) noexcept {
+            return table;
+        }
+        template <LRActionGotoTable table, size_t idx, NonTerminal A,
+                  auto... rest>
+        static constexpr auto gen_impl_a(any_sequence<A, rest...>) noexcept {
+            return gen_impl_a<table, idx>(any_sequence<rest...>{});
+        }
+        template <LRActionGotoTable table, size_t idx, Terminal a, auto... rest>
+        static constexpr auto gen_impl_a(any_sequence<a, rest...>) noexcept {
+            using ItemSet = ItemSetCollection::template set_at<idx>;
+            constexpr auto j =
+                ItemSetCollection::template index_of<Goto<ItemSet, a>>();
+            if constexpr (table.actions[idx][a.id] == Action{Action::SHIFT, j}) {
+                return gen_impl_a<table, idx>(any_sequence<rest...>{});
+            } else {
+                static_assert(table.actions[idx][a.id].type == Action::ERROR,
+                              "conflict dected!");
+                constexpr auto new_table =
+                    table.copy_set_actions(idx, a.id, {Action::SHIFT, j});
+                return gen_impl_a<new_table, idx>(any_sequence<rest...>{});
+            }
+        }
+
+        template <LRActionGotoTable table, size_t i, size_t val>
+        static constexpr auto gen_impl_b2() noexcept {
+            return table;
+        }
+        template <LRActionGotoTable table, size_t i, size_t val, Terminal j,
+                  Terminal... rest>
+        static constexpr auto gen_impl_b2() noexcept {
+            if constexpr (j.id > token_size || table.actions[i][j.id] == Action{Action::REDUCE, val}) {
+                return gen_impl_b2<table, i, val, rest...>();
+            } else {
+                static_assert(table.actions[i][j.id].type == Action::ERROR,
+                              "conflict dected!");
+                constexpr auto new_table =
+                    table.copy_set_actions(i, j.id, {Action::REDUCE, val});
+                return gen_impl_b2<new_table, i, val, rest...>();
+            }
+        }
+        template <LRActionGotoTable table, size_t i, size_t val,
+                  Terminal... rest>
+        static constexpr auto gen_impl_b3(TerminalSet<rest...>) noexcept {
+            return gen_impl_b2<table, i, val, rest...>();
+        }
+
+        template <LRActionGotoTable table, size_t idx>
+        static constexpr auto gen_impl_b(std::tuple<>) noexcept {
+            return table;
+        }
+        template <LRActionGotoTable table, size_t idx, typename rule,
+                  typename... rest>
+        static constexpr auto gen_impl_b(std::tuple<rule, rest...>) noexcept {
+            constexpr auto val = index_of<rule>();
+            using follow_set =
+                FollowSet::template ValueOf<value_wrapper<rule::non_terminal>>;
+            constexpr auto new_table =
+                gen_impl_b3<table, idx, val>(follow_set{});
+            return gen_impl_b<new_table, idx>(std::tuple<rest...>{});
+        }
+
+        template <LRActionGotoTable table, size_t idx>
+        static constexpr auto gen_impl_c(any_sequence<>) noexcept {
+            return table;
+        }
+        template <LRActionGotoTable table, size_t idx, Terminal a, auto... rest>
+        static constexpr auto gen_impl_c(any_sequence<a, rest...>) noexcept {
+            return gen_impl_c<table, idx>(any_sequence<rest...>{});
+        }
+        template <LRActionGotoTable table, size_t idx, NonTerminal A,
+                  auto... rest>
+        static constexpr auto gen_impl_c(any_sequence<A, rest...>) noexcept {
+            using ItemSet = ItemSetCollection::template set_at<idx>;
+            constexpr auto j =
+                ItemSetCollection::template index_of<Goto<ItemSet, A>>();
+            if constexpr (table.gotos[idx][A.id].idx == j) {
+                return gen_impl_c<table, idx>(any_sequence<rest...>{});
+            } else {
+                static_assert(table.gotos[idx][A.id].idx ==
+                                  details::Goto::error,
+                              "conflict dected!");
+                constexpr auto new_table = table.copy_set_gotos(idx, A.id, {j});
+                return gen_impl_c<new_table, idx>(any_sequence<rest...>{});
+            }
+        }
+
+        template <LRActionGotoTable table, size_t idx>
+        static constexpr auto gen_impl() noexcept {
+            if constexpr (idx == state_size) {
+                return table;
+            } else {
+                using ItemSet = ItemSetCollection::template set_at<idx>;
+                constexpr auto next_symbols = ItemSet::next_symbols();
+                constexpr auto table_a = gen_impl_a<table, idx>(next_symbols);
+                constexpr auto reduce_seq = ItemSet::reduce_seq();
+                constexpr auto table_b = gen_impl_b<table_a, idx>(reduce_seq);
+                constexpr auto table_c = gen_impl_c<table_b, idx>(next_symbols);
+                return gen_impl<table_c, idx + 1>();
+            }
+        }
+
+        static constexpr auto gen() noexcept {
+            return gen_impl<LRActionGotoTable{}, 0>();
+        }
+    };
+
+    static constexpr auto lr_action_goto_table =
+        GenerateActionGotoTableHelper::gen();
+
     friend std::ostream &operator<<(std::ostream &os,
                                     SimplifiedRuleTable table) {
         os << "SimplifiedRuleTable:\n";
@@ -343,6 +502,16 @@ template <typename Rule, size_t idx> struct LRItem {
     using rule_t = Rule;
     static constexpr size_t index = idx;
     static constexpr auto symbol = Rule::non_terminal;
+    static constexpr bool reducable = index == Rule::statement_size;
+
+    /// return Rule if idx == size
+    static constexpr auto reduce_seq() noexcept {
+        if constexpr (reducable) {
+            return std::tuple<Rule>{};
+        } else {
+            return std::tuple<>{};
+        }
+    }
 
     /// get the next symbol
     static constexpr auto next_symbol() noexcept {
@@ -410,6 +579,11 @@ template <typename... Items> struct LRItemSet {
     /// get the next symbol (as any_sequence)
     static constexpr auto next_symbols() noexcept {
         return (Items::next_symbol_as_seq() + ...);
+    }
+
+    /// get all could reduced rules
+    static constexpr auto reduce_seq() noexcept {
+        return std::tuple_cat(Items::reduce_seq()...);
     }
 
     template <typename Item> static constexpr bool contains() noexcept {
@@ -522,7 +696,7 @@ template <typename... Sets> struct LRItemSetCollection {
         if constexpr (set{} == cur{}) {
             return 0;
         } else {
-            return index_of_impl<set, rest...>();
+            return 1 + index_of_impl<set, rest...>();
         }
     }
 };
