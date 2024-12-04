@@ -78,14 +78,11 @@ static inline void test_syntax() {
     constexpr auto lr_table = std::get<1>(compiled);
     using lr_table_t = decltype(lr_table);
     std::cout << lr_table;
-    using closure_1 = lr_table_t::StartClosure;
-    std::cout << "StartClosure = " << closure_1{};
-    using closure_2 = lr_table_t::Goto<closure_1, slr_gen::NonTerminal(0)>;
-    std::cout << "Goto<closure_1, ADD> = " << closure_2{};
     using first_set = lr_table_t::FirstSet;
     std::cout << "FirstSet = " << first_set{};
     using follow_set = lr_table_t::FollowSet;
     std::cout << "FollowSet = " << follow_set{};
+    lr_table.print_item_set_collection(std::cout);
 }
 
 int main() {

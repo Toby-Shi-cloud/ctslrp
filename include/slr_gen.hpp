@@ -140,12 +140,13 @@ struct SimplifiedRuleTable {
             return Set{};
         }
 
-        template <typename Set, typename... items, typename... rest>
+        template <typename Set = LRItemSet<>, typename... items,
+                  typename... rest>
         static constexpr auto calc(std::tuple<items...>, rest...) noexcept {
             return calc<Set>(items{}..., rest{}...);
         }
 
-        template <typename Set, typename item, typename... rest,
+        template <typename Set = LRItemSet<>, typename item, typename... rest,
                   typename = std::enable_if_t<is_lr_item_v<item>>>
         static constexpr auto calc(item, rest...) noexcept {
             if constexpr (Set::template contains<item>()) {
@@ -163,10 +164,10 @@ struct SimplifiedRuleTable {
         }
     };
     template <typename... Items>
-    using Closure =
-        decltype(ClosureHelper::template calc<LRItemSet<>>(Items{}...));
+    using Closure = decltype(ClosureHelper::template calc(Items{}...));
     template <typename ItemSet, auto symbol>
-    using Goto = Closure<decltype(ItemSet::template next<symbol>())>;
+    using Goto = decltype(ClosureHelper::template calc(
+        ItemSet::template next<symbol>()));
     using StartClosure = Closure<extended_item>;
 
     struct FirstSetHelper {
@@ -290,6 +291,55 @@ struct SimplifiedRuleTable {
     };
     using FollowSet = decltype(FollowSetHelper::calc());
 
+    struct ItemSetCollectionHelper {
+        template <typename... sets, typename set>
+        static constexpr auto add(std::tuple<sets...>, set) noexcept {
+            if constexpr (((sets{} == set{}) || ...)) {
+                return std::tuple<sets...>{};
+            } else {
+                return std::tuple<sets..., set>{};
+            }
+        }
+
+        template <typename Collection, typename set, typename... rest>
+        static constexpr auto calc_impl(any_sequence<>) noexcept {
+            return calc<Collection, rest...>();
+        }
+
+        template <typename Collection, typename set, typename... rest,
+                  auto symbol, auto... others>
+        static constexpr auto
+        calc_impl(any_sequence<symbol, others...>) noexcept {
+            return calc_impl<Collection, set, rest..., Goto<set, symbol>>(
+                any_sequence<others...>{});
+        }
+
+        template <typename Collection> static constexpr auto calc() noexcept {
+            return Collection{};
+        }
+
+        template <typename Collection, typename set, typename... rest>
+        static constexpr auto calc() noexcept {
+            constexpr auto symbols = set::next_symbols();
+            using new_collection = decltype(add(Collection{}, set{}));
+            return calc_impl<new_collection, set, rest...>(symbols);
+        }
+    };
+    using ItemSetCollection =
+        decltype(ItemSetCollectionHelper::template calc<std::tuple<>,
+                                                        StartClosure>());
+
+    template <size_t idx = 0>
+    static std::ostream &print_item_set_collection(std::ostream &os) noexcept {
+        if constexpr (idx == std::tuple_size_v<ItemSetCollection>) {
+            return os;
+        } else {
+            os << "closure(" << idx
+               << ") = " << std::tuple_element_t<idx, ItemSetCollection>{};
+            return print_item_set_collection<idx + 1>(os);
+        }
+    }
+
     friend std::ostream &operator<<(std::ostream &os,
                                     SimplifiedRuleTable table) {
         os << "SimplifiedRuleTable:\n";
@@ -312,6 +362,15 @@ template <typename Rule, size_t idx> struct LRItem {
             return /* void */;
         } else {
             return std::get<index>(Rule::statements);
+        }
+    }
+
+    /// get the next symbol as sequence
+    static constexpr auto next_symbol_as_seq() noexcept {
+        if constexpr (index == Rule::statement_size) {
+            return any_sequence<>{};
+        } else {
+            return any_sequence<std::get<index>(Rule::statements)>{};
         }
     }
 
@@ -355,12 +414,29 @@ template <typename... Items> struct LRItemSet {
     static_assert((is_lr_item_v<Items> && ...), "Items must be LRItem");
     static constexpr size_t item_size = sizeof...(Items);
 
+    /// get the next item if the symbol is matched
     template <auto symbol> static constexpr auto next() noexcept {
-        return std::tuple_cat((Items::template next<symbol>())...);
+        return std::tuple_cat(Items::template next<symbol>()...);
+    }
+
+    /// get the next symbol (as any_sequence)
+    static constexpr auto next_symbols() noexcept {
+        return (Items::next_symbol_as_seq() + ...);
     }
 
     template <typename Item> static constexpr bool contains() noexcept {
         return ((std::is_same_v<Items, Item>) || ...);
+    }
+
+    template <typename... Others>
+    constexpr bool operator==(LRItemSet<Others...>) const noexcept {
+        return (contains<Others>() && ...) &&
+               (LRItemSet<Others...>::template contains<Items>() && ...);
+    }
+
+    template <typename... Others>
+    constexpr bool operator!=(LRItemSet<Others...> o) const noexcept {
+        return !(*this == o);
     }
 
     template <typename Item> constexpr auto operator+(Item) const noexcept {
@@ -370,7 +446,7 @@ template <typename... Items> struct LRItemSet {
 
     friend std::ostream &operator<<(std::ostream &os, LRItemSet set) {
         os << "LRItemSet:\n";
-        ((os << Items{} << '\n'), ...);
+        ((os << "  " << Items{} << '\n'), ...);
         return os;
     }
 };
