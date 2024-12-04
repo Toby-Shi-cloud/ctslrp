@@ -66,6 +66,8 @@ namespace ctslrp::details {
 using regex::to_regex;
 using regex::to_regex_by_value_t;
 using regex::to_regex_t;
+using regex::is_regex;
+using regex::is_regex_v;
 } // namespace ctslrp::details
 
 namespace ctslrp {

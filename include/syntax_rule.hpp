@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lexer.hpp"
 #include "regex.hpp"
 #include "type_map.hpp"
 #include "utils.hpp"
@@ -59,6 +60,7 @@ template <typename SymbolEnum> class SyntaxRuleGenerator {
         using Statements = std::tuple<Stat...>;
         template <size_t idx>
         using Statement = std::tuple_element_t<idx, Statements>;
+        constexpr static size_t statement_size = sizeof...(Stat);
 
         BindFunc func;
 
@@ -93,6 +95,7 @@ template <typename SymbolEnum> class SyntaxRuleGenerator {
     /// A table to store all the rules (with all type information)
     template <typename... Rules> class BindedRuleTable : std::tuple<Rules...> {
         using tuple = std::tuple<Rules...>;
+        template <size_t idx> using rule_t = std::tuple_element_t<idx, tuple>;
         using BindedTypeMap = TypeMap<
             TypeMapEntry<typename Rules::Symbol, typename Rules::BindType>...>;
 
@@ -109,7 +112,8 @@ template <typename SymbolEnum> class SyntaxRuleGenerator {
         explicit constexpr BindedRuleTable(const tuple &t) : tuple(t) {}
 
         template <typename... Ts>
-        friend constexpr auto operator,(BindedRuleTable table, BindedRule<Ts...> rule) {
+        friend constexpr auto operator,(BindedRuleTable table,
+                                        BindedRule<Ts...> rule) {
             using R = BindedRule<Ts...>;
             if constexpr (well_formed<typename R::Symbol,
                                       typename R::BindType>()) {
@@ -126,6 +130,50 @@ template <typename SymbolEnum> class SyntaxRuleGenerator {
                     typename_of<typename R::BindType>() + "`"_raw;
                 return CompileError<msg>{};
             }
+        }
+
+     private:
+        /// add stat to map
+        template <typename Map, typename Stat>
+        constexpr static auto regex_to_token_map_impl_impl() {
+            if constexpr (is_regex_v<Stat>) {
+                return Map{} | TypeMapEntry<Stat, value_wrapper<Map::size()>>{};
+            } else {
+                return Map{};
+            }
+        }
+
+        /// add all stat in rule to map
+        template <typename Map, typename Rule, size_t idx = 0>
+        constexpr static auto regex_to_token_map_impl() {
+            if constexpr (idx == Rule::statement_size) {
+                return Map{};
+            } else {
+                return regex_to_token_map_impl<
+                    decltype(regex_to_token_map_impl_impl<
+                             Map, typename Rule::template Statement<idx>>()),
+                    Rule, idx + 1>();
+            }
+        }
+
+        /// return TypeMap[ Regex -> wrapper_value<token_id> ]
+        template <typename Map = TypeMap<>, size_t idx = 0>
+        constexpr static auto regex_to_token_map() {
+            if constexpr (idx == sizeof...(Rules)) {
+                return Map{};
+            } else {
+                return regex_to_token_map<
+                    decltype(regex_to_token_map_impl<Map, rule_t<idx>>()),
+                    idx + 1>();
+            }
+        }
+
+     public:
+        constexpr auto compile() const {
+            using TokenMap = decltype(regex_to_token_map());
+            using Re = TokenMap::Keys;
+            auto lexer = Lexer("\\s"_r, Re{});
+            return lexer;
         }
     };
 };

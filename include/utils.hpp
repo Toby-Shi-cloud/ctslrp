@@ -51,6 +51,7 @@ template <size_t N> struct string_literal {
     constexpr std::string_view sv() const { return {m_data, N}; }
     static constexpr size_t size() { return N; }
 
+    constexpr operator std::string_view() const { return sv(); }
     constexpr char operator[](size_t i) const { return m_data[i]; }
 
     constexpr size_t find(char ch, size_t pos = 0) const {

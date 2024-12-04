@@ -1,5 +1,6 @@
 #pragma once
 
+#include <tuple>
 #include <type_traits>
 
 namespace ctslrp::details {
@@ -19,12 +20,7 @@ template <typename K, typename V> struct TypeMapEntry {
     }
 };
 
-template <typename... Entries> struct TypeMap {
-    template <typename K, typename V>
-    constexpr auto operator+(TypeMapEntry<K, V>) const {
-        return TypeMap<Entries..., TypeMapEntry<K, V>>{};
-    }
-
+template <typename... Es> class TypeMap {
     template <typename T> struct TypeWrapper {
         using type = T;
     };
@@ -51,11 +47,35 @@ template <typename... Entries> struct TypeMap {
         return false;
     }
 
-    template <typename K>
-    using ValueOf = decltype(TypeMap::template get_impl<K, Entries...>())::type;
+ public:
+    template <typename K, typename V>
+    constexpr auto operator+(TypeMapEntry<K, V>) const {
+        return TypeMap<Es..., TypeMapEntry<K, V>>{};
+    }
+
+    template <typename K, typename V>
+    constexpr auto operator|(TypeMapEntry<K, V>) const {
+        if constexpr (contains<K>()) {
+            return *this;
+        } else {
+            return TypeMap<Es..., TypeMapEntry<K, V>>{};
+        }
+    }
+
+    using Keys = std::tuple<typename Es::Key...>;
+    using Values = std::tuple<typename Es::Value...>;
+    using Entries = std::tuple<Es...>;
+
+    constexpr static size_t size() { return sizeof...(Es); }
+
+    template <typename K> constexpr static auto get() {
+        return get_impl<K, Es...>();
+    }
+
+    template <typename K> using ValueOf = decltype(get<K>())::type;
 
     template <typename K> constexpr static bool contains() {
-        return contains_impl<K, Entries...>();
+        return contains_impl<K, Es...>();
     }
 };
-} // namespace tbslr::details
+} // namespace ctslrp::details

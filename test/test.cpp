@@ -69,8 +69,11 @@ static inline void test_syntax() {
             .bind<int>([](int x) { return x; })
         // Syntex Table End
     );
-    std::cout << typename_of(table) << std::endl;
-    // auto parser = table.compile();
+    constexpr auto lexer = table.compile();
+    constexpr auto tokens = lexer.tokenize<"1+2*3">();
+    for (const auto &token : tokens) {
+        std::cout << token << std::endl;
+    }
 }
 
 int main() {
