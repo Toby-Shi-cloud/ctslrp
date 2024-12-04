@@ -69,18 +69,23 @@ static inline void test_syntax() {
             .bind<int>([](int x) { return x; })
         // Syntex Table End
     );
-    constexpr auto compiled = table.compile();
-    constexpr auto lr_table = std::get<1>(compiled);
-    std::cout << lr_table;
-    constexpr auto closure_1 = lr_table.start_closure<slr_gen::NonTerminal{0}>();
-    std::cout << closure_1;
-    constexpr auto closure_2 = lr_table.Goto<slr_gen::NonTerminal(0)>(closure_1);
-    std::cout << closure_2;
+    constexpr auto compiled = table.compile<Symbol::ADD>();
     constexpr auto lexer = std::get<0>(compiled);
     constexpr auto tokens = lexer.tokenize<"1+2*3">();
     for (const auto &token : tokens) {
         std::cout << token << std::endl;
     }
+    constexpr auto lr_table = std::get<1>(compiled);
+    using lr_table_t = decltype(lr_table);
+    std::cout << lr_table;
+    using closure_1 = lr_table_t::StartClosure;
+    std::cout << "StartClosure = " << closure_1{};
+    using closure_2 = lr_table_t::Goto<closure_1, slr_gen::NonTerminal(0)>;
+    std::cout << "Goto<closure_1, ADD> = " << closure_2{};
+    using first_set = lr_table_t::FirstSet;
+    std::cout << "FirstSet = " << first_set{};
+    using follow_set = lr_table_t::FollowSet;
+    std::cout << "FollowSet = " << follow_set{};
 }
 
 int main() {

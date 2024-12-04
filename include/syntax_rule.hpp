@@ -203,16 +203,19 @@ template <typename SymbolEnum> class SyntaxRuleGenerator {
             return slr_gen::SimplifiedRule(any_sequence<sym>{} + exps);
         }
 
+        template <SymbolEnum symbol>
         constexpr static auto simpilify_rule_table() {
-            return slr_gen::SimplifiedRuleTable<
+            constexpr auto sym =
+                slr_gen::NonTerminal{static_cast<size_t>(symbol)};
+            return slr_gen::SimplifiedRuleTable<sym, 
                 decltype(simpilify_rule<Rules>())...>{};
         }
 
      public:
-        constexpr auto compile() const {
+        template <SymbolEnum symbol> constexpr auto compile() const {
             using Re = TokenMap::Keys;
             auto lexer = Lexer("\\s"_r, Re{});
-            auto table = simpilify_rule_table();
+            auto table = simpilify_rule_table<symbol>();
             return std::make_tuple(lexer, table);
         }
     };
