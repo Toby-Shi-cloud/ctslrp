@@ -9,7 +9,8 @@
 namespace ctslrp::details {
 /// a value wrapper of any type (convert constexpr value to type)
 template <auto v> struct value_wrapper {
-    static constexpr auto value = v;
+    using type = decltype(v);
+    static constexpr type value = v;
 };
 
 /// a sequence of any type
@@ -149,6 +150,17 @@ template <auto value> constexpr auto valuename_of() {
     else
         return string_literal<tpname.size()>{tpname};
 }
+
+/// A magic type to represent any non-type-template parameter
+template <typename T> struct any_value {
+    using type = T;
+    type value;
+    constexpr any_value(T v) : value{v} {}
+    constexpr any_value(const char (&str)[sizeof(T)]) : value{str} {}
+};
+template <size_t N>
+any_value(const char (&str)[N]) -> any_value<string_literal<N - 1>>;
+template <typename T> any_value(T) -> any_value<T>;
 
 template <auto msg> struct CompileError {
 #if __cpp_static_assert >= 202306L

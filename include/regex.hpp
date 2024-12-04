@@ -2,6 +2,7 @@
 
 #include "ctre.hpp"
 #include "utils.hpp"
+#include <type_traits>
 #include <utility>
 
 namespace ctslrp::details::regex {
@@ -53,6 +54,12 @@ template <string_literal raw> struct to_regex<value_wrapper<raw>> {
 template <typename T> using to_regex_t = typename to_regex<T>::type;
 template <auto value>
 using to_regex_by_value_t = to_regex_t<value_wrapper<value>>;
+
+/// to determine if a type is a regex
+template <typename T> struct is_regex : std::false_type {};
+template <typename RE, typename... Args>
+struct is_regex<ctre::regular_expression<RE, Args...>> : std::true_type {};
+template <typename T> inline constexpr bool is_regex_v = is_regex<T>::value;
 } // namespace ctslrp::details::regex
 
 namespace ctslrp::details {

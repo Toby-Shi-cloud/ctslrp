@@ -1,6 +1,8 @@
 #include "regex.hpp"
+#include "syntax_rule.hpp"
 #include "type_map.hpp"
 #include "utils.hpp"
+#include <iostream>
 #include <type_traits>
 
 static inline void test_type_map() {
@@ -40,7 +42,40 @@ static inline void test_regex() {
     static_assert(pat3::search("999x") == "999");
 }
 
+static inline void test_syntax() {
+    using namespace ctslrp::literals;
+    using namespace ctslrp::details;
+    enum class Symbol { ADD, MUL, NUM };
+    SyntaxRuleGenerator<Symbol> gen;
+    constexpr auto addexp = gen.decl<Symbol::ADD>();
+    constexpr auto mulexp = gen.decl<Symbol::MUL>();
+    constexpr auto number = gen.decl<Symbol::NUM>();
+    constexpr auto table = (
+        // Syntex Table Begin
+        addexp // AddExp -> MulExp
+            .define<Symbol::MUL>()
+            .bind<int>([](int x) { return x; }),
+        addexp // AddExp -> AddExp + MulExp
+            .define<Symbol::ADD, "+", Symbol::MUL>()
+            .bind<int>([](int x, auto &&, int y) { return x + y; }),
+        mulexp // MulExp -> Num
+            .define<Symbol::NUM>()
+            .bind<int>([](int x) { return x; }),
+        mulexp // MulExp -> MulExp *
+            .define<Symbol::MUL, "*", Symbol::NUM>()
+            .bind<int>([](int x, auto &&, int y) { return x * y; }),
+        number // Number -> r"[1-9][0-9]*"
+            .define<"[1-9][0-9]*"_r>()
+            .bind<int>([](int x) { return x; })
+        // Syntex Table End
+    );
+    std::cout << typename_of(table) << std::endl;
+    // auto parser = table.compile();
+}
+
 int main() {
     test_type_map();
     test_regex();
+    test_syntax();
+    return 0;
 }
