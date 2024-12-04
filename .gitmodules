@@ -1,0 +1,4 @@
+[submodule "lib/ctre"]
+	path = lib/ctre
+	url = https://github.com/hanickadot/compile-time-regular-expressions.git
+	branch = v3.9.0
