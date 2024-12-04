@@ -82,7 +82,8 @@ static inline void test_syntax() {
     std::cout << "FirstSet = " << first_set{};
     using follow_set = lr_table_t::FollowSet;
     std::cout << "FollowSet = " << follow_set{};
-    lr_table.print_item_set_collection(std::cout);
+    using item_set_collection = lr_table_t::ItemSetCollection;
+    std::cout << item_set_collection{}; 
 }
 
 int main() {

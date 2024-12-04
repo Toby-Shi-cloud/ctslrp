@@ -55,6 +55,8 @@ template <typename Rule, size_t idx> struct LRItem;
 template <typename... Items> struct LRItemSet;
 /// The Terminal Set (First/Follow Set)
 template <Terminal... ts> struct TerminalSet;
+/// The LR(0) Item Set Collection
+template <typename... Sets> struct LRItemSetCollection;
 } // namespace ctslrp::details::slr_gen
 
 // type traits
@@ -71,6 +73,12 @@ template <typename T> struct is_lr_item : std::false_type {};
 template <typename Rule, size_t idx>
 struct is_lr_item<LRItem<Rule, idx>> : std::true_type {};
 template <typename T> constexpr bool is_lr_item_v = is_lr_item<T>::value;
+/// check if the type is LRItemSet
+template <typename T> struct is_lr_item_set : std::false_type {};
+template <typename... Items>
+struct is_lr_item_set<LRItemSet<Items...>> : std::true_type {};
+template <typename T>
+constexpr bool is_lr_item_set_v = is_lr_item_set<T>::value;
 } // namespace ctslrp::details::slr_gen
 
 namespace ctslrp::details::slr_gen {
@@ -292,15 +300,6 @@ struct SimplifiedRuleTable {
     using FollowSet = decltype(FollowSetHelper::calc());
 
     struct ItemSetCollectionHelper {
-        template <typename... sets, typename set>
-        static constexpr auto add(std::tuple<sets...>, set) noexcept {
-            if constexpr (((sets{} == set{}) || ...)) {
-                return std::tuple<sets...>{};
-            } else {
-                return std::tuple<sets..., set>{};
-            }
-        }
-
         template <typename Collection, typename set, typename... rest>
         static constexpr auto calc_impl(any_sequence<>) noexcept {
             return calc<Collection, rest...>();
@@ -321,24 +320,13 @@ struct SimplifiedRuleTable {
         template <typename Collection, typename set, typename... rest>
         static constexpr auto calc() noexcept {
             constexpr auto symbols = set::next_symbols();
-            using new_collection = decltype(add(Collection{}, set{}));
+            using new_collection = decltype(Collection{} + set{});
             return calc_impl<new_collection, set, rest...>(symbols);
         }
     };
     using ItemSetCollection =
-        decltype(ItemSetCollectionHelper::template calc<std::tuple<>,
+        decltype(ItemSetCollectionHelper::template calc<LRItemSetCollection<>,
                                                         StartClosure>());
-
-    template <size_t idx = 0>
-    static std::ostream &print_item_set_collection(std::ostream &os) noexcept {
-        if constexpr (idx == std::tuple_size_v<ItemSetCollection>) {
-            return os;
-        } else {
-            os << "closure(" << idx
-               << ") = " << std::tuple_element_t<idx, ItemSetCollection>{};
-            return print_item_set_collection<idx + 1>(os);
-        }
-    }
 
     friend std::ostream &operator<<(std::ostream &os,
                                     SimplifiedRuleTable table) {
@@ -486,6 +474,55 @@ template <Terminal... ts> struct TerminalSet {
             return TerminalSet<rest...>{};
         } else {
             return TerminalSet<item>{} + remove_impl<value, rest...>();
+        }
+    }
+};
+
+template <typename... Sets> struct LRItemSetCollection {
+    static_assert((is_lr_item_set_v<Sets> && ...), "Sets should be LRItemSet");
+
+    static constexpr size_t size() noexcept { return sizeof...(Sets); }
+    template <typename set> static constexpr bool contains() noexcept {
+        return ((set{} == Sets{}) || ...);
+    }
+
+    template <size_t idx>
+    using set_at = std::tuple_element_t<idx, std::tuple<Sets...>>;
+
+    template <typename set> static constexpr auto index_of() {
+        return index_of_impl<set, Sets...>();
+    }
+
+    template <typename set> constexpr auto operator+(set) const noexcept {
+        if constexpr (contains<set>()) {
+            return LRItemSetCollection<Sets...>{};
+        } else {
+            return LRItemSetCollection<Sets..., set>{};
+        }
+    }
+
+    template <size_t idx = 0>
+    friend std::ostream &operator<<(std::ostream &os,
+                                    LRItemSetCollection) noexcept {
+        if constexpr (idx == size()) {
+            return os;
+        } else {
+            os << "closure(" << idx << ") = " << set_at<idx>();
+            return operator<< <idx + 1>(os, LRItemSetCollection{});
+        }
+    }
+
+ private:
+    template <typename set> static constexpr auto index_of_impl() {
+        static_assert(sizeof(set) == 0, "set not found!");
+    }
+
+    template <typename set, typename cur, typename... rest>
+    static constexpr auto index_of_impl() {
+        if constexpr (set{} == cur{}) {
+            return 0;
+        } else {
+            return index_of_impl<set, rest...>();
         }
     }
 };
