@@ -69,7 +69,14 @@ static inline void test_syntax() {
             .bind<int>([](int x) { return x; })
         // Syntex Table End
     );
-    constexpr auto lexer = table.compile();
+    constexpr auto compiled = table.compile();
+    constexpr auto lr_table = std::get<1>(compiled);
+    std::cout << lr_table;
+    constexpr auto closure_1 = lr_table.start_closure<slr_gen::NonTerminal{0}>();
+    std::cout << closure_1;
+    constexpr auto closure_2 = lr_table.Goto<slr_gen::NonTerminal(0)>(closure_1);
+    std::cout << closure_2;
+    constexpr auto lexer = std::get<0>(compiled);
     constexpr auto tokens = lexer.tokenize<"1+2*3">();
     for (const auto &token : tokens) {
         std::cout << token << std::endl;

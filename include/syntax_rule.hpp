@@ -2,10 +2,12 @@
 
 #include "lexer.hpp"
 #include "regex.hpp"
+#include "slr_gen.hpp"
 #include "type_map.hpp"
 #include "utils.hpp"
 
 #include <functional>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -54,6 +56,8 @@ template <typename SymbolEnum> class SyntaxRuleGenerator {
     template <typename... Rules> class BindedRuleTable;
     template <typename Sym, typename BindT, typename BindF, typename... Stat>
     struct BindedRule {
+        static_assert(static_cast<ssize_t>(Sym::value) >= 0,
+                      "Symbol must be declared as positive");
         using Symbol = Sym;
         using BindType = BindT;
         using BindFunc = BindF;
@@ -168,12 +172,48 @@ template <typename SymbolEnum> class SyntaxRuleGenerator {
             }
         }
 
+        // regex -> token_id
+        using TokenMap = decltype(regex_to_token_map());
+
+     private:
+        template <typename Rule, size_t idx = 0>
+        constexpr static auto simpilify_rule_impl() {
+            if constexpr (idx == Rule::statement_size) {
+                return any_sequence<>{};
+            } else {
+                using statement = typename Rule::template Statement<idx>;
+                if constexpr (is_regex_v<statement>) {
+                    constexpr auto token_id =
+                        TokenMap::template ValueOf<statement>::value;
+                    return any_sequence<slr_gen::Terminal{token_id}>{} +
+                           simpilify_rule_impl<Rule, idx + 1>();
+                } else {
+                    constexpr auto sym_id =
+                        static_cast<size_t>(statement::value);
+                    return any_sequence<slr_gen::NonTerminal{sym_id}>{} +
+                           simpilify_rule_impl<Rule, idx + 1>();
+                }
+            }
+        }
+
+        template <typename Rule> constexpr static auto simpilify_rule() {
+            constexpr auto sym =
+                slr_gen::NonTerminal{static_cast<size_t>(Rule::Symbol::value)};
+            constexpr auto exps = simpilify_rule_impl<Rule>();
+            return slr_gen::SimplifiedRule(any_sequence<sym>{} + exps);
+        }
+
+        constexpr static auto simpilify_rule_table() {
+            return slr_gen::SimplifiedRuleTable<
+                decltype(simpilify_rule<Rules>())...>{};
+        }
+
      public:
         constexpr auto compile() const {
-            using TokenMap = decltype(regex_to_token_map());
             using Re = TokenMap::Keys;
             auto lexer = Lexer("\\s"_r, Re{});
-            return lexer;
+            auto table = simpilify_rule_table();
+            return std::make_tuple(lexer, table);
         }
     };
 };
