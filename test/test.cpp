@@ -1,8 +1,5 @@
-#include "regex.hpp"
-#include "syntax_rule.hpp"
-#include "type_map.hpp"
-#include "utils.hpp"
-#include <iostream>
+#include "ctslrp.hpp"
+#include <string_view>
 #include <type_traits>
 
 static inline void test_type_map() {
@@ -42,11 +39,18 @@ static inline void test_regex() {
     static_assert(pat3::search("999x") == "999");
 }
 
-static inline void test_syntax() {
+constexpr int atoi(std::string_view sv) {
+    int result = 0;
+    for (char c : sv) {
+        result = result * 10 + c - '0';
+    }
+    return result;
+}
+
+static inline void test_parser() {
     using namespace ctslrp::literals;
-    using namespace ctslrp::details;
     enum class Symbol { ADD, MUL, NUM };
-    SyntaxRuleGenerator<Symbol> gen;
+    ctslrp::SyntaxRuleGenerator<Symbol> gen;
     constexpr auto addexp = gen.decl<Symbol::ADD>();
     constexpr auto mulexp = gen.decl<Symbol::MUL>();
     constexpr auto number = gen.decl<Symbol::NUM>();
@@ -61,28 +65,22 @@ static inline void test_syntax() {
         mulexp // MulExp -> Num
             .define<Symbol::NUM>()
             .bind<int>([](int x) { return x; }),
-        mulexp // MulExp -> MulExp *
+        mulexp // MulExp -> MulExp * Num
             .define<Symbol::MUL, "*", Symbol::NUM>()
             .bind<int>([](int x, auto &&, int y) { return x * y; }),
         number // Number -> r"[1-9][0-9]*"
             .define<"[1-9][0-9]*"_r>()
-            .bind<int>([](int x) { return x; })
+            .bind<int>([](ctslrp::Token token) { return atoi(token.value); })
         // Syntex Table End
     );
-    constexpr auto compiled = table.compile<Symbol::ADD>();
-    constexpr auto lexer = std::get<0>(compiled);
-    constexpr auto tokens = lexer.tokenize<"1+2*3">();
-    for (const auto &token : tokens) {
-        std::cout << token << std::endl;
-    }
-    constexpr auto lr_table = std::get<1>(compiled);
-    std::cout << decltype(lr_table)::ItemSetCollection{} << std::endl;
-    std::cout << lr_table.lr_action_goto_table << std::endl;
+    constexpr auto parser = table.compile<Symbol::ADD>();
+    static_assert(parser.parse("1+2*3+4") == 11);
+    static_assert(parser.parse("9999*9999") == 99980001);
 }
 
 int main() {
     test_type_map();
     test_regex();
-    test_syntax();
+    test_parser();
     return 0;
 }

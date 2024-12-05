@@ -53,6 +53,8 @@ struct Conflict {
 };
 
 template <size_t token_size> struct ActionTableLine {
+    std::array<Action, token_size + 1> data;
+
     constexpr auto operator[](size_t state) const noexcept {
         if (state == -1) return data[token_size];
         return data[state];
@@ -61,9 +63,6 @@ template <size_t token_size> struct ActionTableLine {
         if (state == -1) return data[token_size];
         return data[state];
     }
-
- private:
-    std::array<Action, token_size + 1> data;
 };
 
 template <size_t state_size, size_t token_size>

@@ -5,17 +5,34 @@
 #include <algorithm>
 #include <array>
 #include <ostream>
+#include <string>
 #include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
 
 namespace ctslrp::details {
+constexpr std::string constexpr_to_string(size_t n) {
+    std::string str;
+    while (n) {
+        str.push_back('0' + n % 10);
+        n /= 10;
+    }
+    std::reverse(str.begin(), str.end());
+    return str;
+}
+
 struct Token {
     static constexpr size_t npos = -1;
-    size_t token_id;
-    std::string_view value;
-    size_t line, column;
+    size_t token_id = npos;
+    std::string_view value = "";
+    size_t line = 0, column = 0;
+    constexpr std::string to_string() const noexcept {
+        return (token_id == npos ? std::string("<error-token>")
+                                 : std::string(value)) +
+               " at " + constexpr_to_string(line) + ":" +
+               constexpr_to_string(column);
+    }
     friend std::ostream &operator<<(std::ostream &os, const Token &token) {
         return os << "Token(" << token.token_id << "): " << token.value
                   << " at " << token.line << ":" << token.column;
@@ -59,13 +76,13 @@ template <typename Skip, typename... Re> class Lexer {
     constexpr Lexer(Skip, Re...) noexcept {}
 
     /// Get next token
-    constexpr static Token next(std::string_view input, size_t pos) noexcept {
-        std::string_view ss = input.substr(pos);
-        ss.remove_prefix(skip(ss).size());
+    constexpr static Token next(std::string_view input, size_t &pos) noexcept {
+        pos += skip(input.substr(pos)).size();
         auto [line, column] = get_line_column(input.substr(0, pos));
-        Token token = match(ss);
+        Token token = match(input.substr(pos));
         token.line = line;
         token.column = column;
+        pos += token.value.size();
         return token;
     }
 
@@ -78,7 +95,6 @@ template <typename Skip, typename... Re> class Lexer {
         while (pos < input.size()) {
             auto token = next(input, pos);
             if (token.token_id == Token::npos) break;
-            pos += token.value.size();
             size++;
         }
         if (pos < input.size()) return Token::npos;
@@ -94,7 +110,6 @@ template <typename Skip, typename... Re> class Lexer {
         while (pos < input.size()) {
             auto token = next(input, pos);
             if (token.token_id == Token::npos) break;
-            pos += token.value.size();
             tokens[idx++] = token;
         }
         return tokens;
@@ -107,7 +122,6 @@ template <typename Skip, typename... Re> class Lexer {
         while (pos < input.size()) {
             auto token = next(input, pos);
             if (token.token_id == Token::npos) break;
-            pos += token.value.size();
             tokens.push_back(token);
         }
         return tokens;

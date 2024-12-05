@@ -42,25 +42,28 @@ template <size_t N> struct string_literal {
         m_data[N] = '\0';
     }
     constexpr string_literal(std::string_view str) {
-        std::copy_n(str.data(), N, m_data);
-        m_data[N] = '\0';
+        size_t len = std::min(N, str.size());
+        std::copy_n(str.data(), len, m_data);
+        for (; len < N + 1; ++len)
+            m_data[len] = 0;
     }
 
     static constexpr size_t npos = -1;
-    constexpr const char *data() const { return m_data; }
-    constexpr std::string_view sv() const { return {m_data, N}; }
-    static constexpr size_t size() { return N; }
+    constexpr const char *data() const noexcept { return m_data; }
+    constexpr std::string_view sv() const noexcept { return {m_data, N}; }
+    static constexpr size_t size() noexcept { return N; }
 
-    constexpr operator std::string_view() const { return sv(); }
-    constexpr char operator[](size_t i) const { return m_data[i]; }
+    constexpr operator std::string_view() const noexcept { return sv(); }
+    constexpr char operator[](size_t i) const noexcept { return m_data[i]; }
 
-    constexpr size_t find(char ch, size_t pos = 0) const {
+    constexpr size_t find(char ch, size_t pos = 0) const noexcept {
         for (size_t i = pos; i < N; ++i)
             if (m_data[i] == ch) return i;
         return npos;
     }
 
-    template <size_t pos, size_t length = npos> constexpr auto substr() const {
+    template <size_t pos, size_t length = npos>
+    constexpr auto substr() const noexcept {
         constexpr size_t real_length = std::min(N - pos, length);
         string_literal<real_length> result;
         std::copy_n(m_data + pos, real_length, result.m_data);
@@ -69,7 +72,7 @@ template <size_t N> struct string_literal {
 
     template <size_t M>
     constexpr string_literal<N + M>
-    operator+(const string_literal<M> &rhs) const {
+    operator+(const string_literal<M> &rhs) const noexcept {
         string_literal<N + M> result;
         std::copy_n(m_data, N, result.m_data);
         std::copy_n(rhs.m_data, M, result.m_data + N);
