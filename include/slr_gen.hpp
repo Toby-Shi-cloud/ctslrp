@@ -4,9 +4,11 @@
 #include "type_map.hpp"
 #include "utils.hpp"
 #include <cstddef>
+#include <optional>
 #include <ostream>
 #include <tuple>
 #include <type_traits>
+#include <variant>
 
 namespace ctslrp::details::slr_gen {
 struct Terminal {
@@ -41,6 +43,19 @@ constexpr bool operator==(Terminal, NonTerminal) noexcept { return false; }
 constexpr bool operator==(NonTerminal, Terminal) noexcept { return false; }
 constexpr bool operator!=(Terminal, NonTerminal) noexcept { return true; }
 constexpr bool operator!=(NonTerminal, Terminal) noexcept { return true; }
+
+template <typename T>
+constexpr auto operator&(const std::optional<T> &x,
+                         const std::optional<T> &y) noexcept {
+    if (x.has_value()) return y;
+    return std::nullopt;
+}
+template <typename T>
+constexpr auto operator|(const std::optional<T> &x,
+                         const std::optional<T> &y) noexcept {
+    if (!x.has_value()) return y;
+    return x;
+}
 } // namespace ctslrp::details::slr_gen
 
 /// forward declaration
@@ -376,111 +391,113 @@ struct SimplifiedRuleTable {
         details::LRActionGotoTable<state_size, token_size, symbol_size>;
 
     struct GenerateActionGotoTableHelper {
-        template <LRActionGotoTable table, size_t idx>
-        static constexpr auto gen_impl_a(any_sequence<>) noexcept {
-            return table;
+        template <size_t idx>
+        static constexpr std::optional<Conflict>
+        gen_impl_nxt(LRActionGotoTable &, any_sequence<>) noexcept {
+            return std::nullopt;
         }
-        template <LRActionGotoTable table, size_t idx, NonTerminal A,
-                  auto... rest>
-        static constexpr auto gen_impl_a(any_sequence<A, rest...>) noexcept {
-            return gen_impl_a<table, idx>(any_sequence<rest...>{});
-        }
-        template <LRActionGotoTable table, size_t idx, Terminal a, auto... rest>
-        static constexpr auto gen_impl_a(any_sequence<a, rest...>) noexcept {
-            using ItemSet = ItemSetCollection::template set_at<idx>;
-            constexpr auto j =
-                ItemSetCollection::template index_of<Goto<ItemSet, a>>();
-            if constexpr (table.actions[idx][a.id] == Action{Action::SHIFT, j}) {
-                return gen_impl_a<table, idx>(any_sequence<rest...>{});
-            } else {
-                static_assert(table.actions[idx][a.id].type == Action::ERROR,
-                              "conflict dected!");
-                constexpr auto new_table =
-                    table.copy_set_actions(idx, a.id, {Action::SHIFT, j});
-                return gen_impl_a<new_table, idx>(any_sequence<rest...>{});
-            }
-        }
-
-        template <LRActionGotoTable table, size_t i, size_t val>
-        static constexpr auto gen_impl_b2() noexcept {
-            return table;
-        }
-        template <LRActionGotoTable table, size_t i, size_t val, Terminal j,
-                  Terminal... rest>
-        static constexpr auto gen_impl_b2() noexcept {
-            if constexpr (j.id > token_size || table.actions[i][j.id] == Action{Action::REDUCE, val}) {
-                return gen_impl_b2<table, i, val, rest...>();
-            } else {
-                static_assert(table.actions[i][j.id].type == Action::ERROR,
-                              "conflict dected!");
-                constexpr auto new_table =
-                    table.copy_set_actions(i, j.id, {Action::REDUCE, val});
-                return gen_impl_b2<new_table, i, val, rest...>();
-            }
-        }
-        template <LRActionGotoTable table, size_t i, size_t val,
-                  Terminal... rest>
-        static constexpr auto gen_impl_b3(TerminalSet<rest...>) noexcept {
-            return gen_impl_b2<table, i, val, rest...>();
-        }
-
-        template <LRActionGotoTable table, size_t idx>
-        static constexpr auto gen_impl_b(std::tuple<>) noexcept {
-            return table;
-        }
-        template <LRActionGotoTable table, size_t idx, typename rule,
-                  typename... rest>
-        static constexpr auto gen_impl_b(std::tuple<rule, rest...>) noexcept {
-            constexpr auto val = index_of<rule>();
-            using follow_set =
-                FollowSet::template ValueOf<value_wrapper<rule::non_terminal>>;
-            constexpr auto new_table =
-                gen_impl_b3<table, idx, val>(follow_set{});
-            return gen_impl_b<new_table, idx>(std::tuple<rest...>{});
-        }
-
-        template <LRActionGotoTable table, size_t idx>
-        static constexpr auto gen_impl_c(any_sequence<>) noexcept {
-            return table;
-        }
-        template <LRActionGotoTable table, size_t idx, Terminal a, auto... rest>
-        static constexpr auto gen_impl_c(any_sequence<a, rest...>) noexcept {
-            return gen_impl_c<table, idx>(any_sequence<rest...>{});
-        }
-        template <LRActionGotoTable table, size_t idx, NonTerminal A,
-                  auto... rest>
-        static constexpr auto gen_impl_c(any_sequence<A, rest...>) noexcept {
+        template <size_t idx, NonTerminal A, auto... rest>
+        static constexpr std::optional<Conflict>
+        gen_impl_nxt(LRActionGotoTable &table,
+                     any_sequence<A, rest...>) noexcept {
             using ItemSet = ItemSetCollection::template set_at<idx>;
             constexpr auto j =
                 ItemSetCollection::template index_of<Goto<ItemSet, A>>();
-            if constexpr (table.gotos[idx][A.id].idx == j) {
-                return gen_impl_c<table, idx>(any_sequence<rest...>{});
-            } else {
-                static_assert(table.gotos[idx][A.id].idx ==
-                                  details::Goto::error,
-                              "conflict dected!");
-                constexpr auto new_table = table.copy_set_gotos(idx, A.id, {j});
-                return gen_impl_c<new_table, idx>(any_sequence<rest...>{});
+            table.gotos[idx][A.id].idx = j;
+            return gen_impl_nxt<idx>(table, any_sequence<rest...>{});
+        }
+        template <size_t idx, Terminal a, auto... rest>
+        static constexpr std::optional<Conflict>
+        gen_impl_nxt(LRActionGotoTable &table,
+                     any_sequence<a, rest...>) noexcept {
+            using ItemSet = ItemSetCollection::template set_at<idx>;
+            constexpr auto j =
+                ItemSetCollection::template index_of<Goto<ItemSet, a>>();
+            if (table.actions[idx][a.id].type == Action::REDUCE) {
+                return Conflict{Conflict::S_R,
+                                idx,
+                                a.id,
+                                {Action::SHIFT, j},
+                                table.actions[idx][a.id]};
             }
+            table.actions[idx][a.id] = {Action::SHIFT, j};
+            return gen_impl_nxt<idx>(table, any_sequence<rest...>{});
         }
 
-        template <LRActionGotoTable table, size_t idx>
-        static constexpr auto gen_impl() noexcept {
+        template <size_t i, size_t val, Terminal... follows>
+        static constexpr std::optional<Conflict>
+        gen_impl_reduce_set_follows(LRActionGotoTable &table,
+                                    TerminalSet<follows...>) noexcept {
+            return (
+                (table.actions[i][follows.id].type != Action::ERROR
+                     ? std::optional(Conflict{
+                           table.actions[i][follows.id].type == Action::SHIFT
+                               ? Conflict::S_R
+                               : Conflict::R_R,
+                           i,
+                           follows.id,
+                           table.actions[i][follows.id],
+                           {Action::REDUCE, val}})
+                     : (table.actions[i][follows.id] = {Action::REDUCE, val},
+                        std::nullopt)) |
+                ...);
+        }
+
+        template <size_t idx>
+        static constexpr std::optional<Conflict>
+        gen_impl_reduce(LRActionGotoTable &, std::tuple<>) noexcept {
+            return std::nullopt;
+        }
+        template <size_t idx, typename rule, typename... rest>
+        static constexpr std::optional<Conflict>
+        gen_impl_reduce(LRActionGotoTable &table,
+                        std::tuple<rule, rest...>) noexcept {
+            constexpr auto val = index_of<rule>();
+            using follow_set =
+                FollowSet::template ValueOf<value_wrapper<rule::non_terminal>>;
+            auto conflict =
+                gen_impl_reduce_set_follows<idx, val>(table, follow_set{});
+            if (conflict) return conflict;
+            return gen_impl_reduce<idx>(table, std::tuple<rest...>{});
+        }
+
+        template <size_t idx>
+        static constexpr std::optional<Conflict>
+        gen_impl(LRActionGotoTable &table) noexcept {
             if constexpr (idx == state_size) {
-                return table;
+                return std::nullopt;
             } else {
                 using ItemSet = ItemSetCollection::template set_at<idx>;
                 constexpr auto next_symbols = ItemSet::next_symbols();
-                constexpr auto table_a = gen_impl_a<table, idx>(next_symbols);
+                auto conflict = gen_impl_nxt<idx>(table, next_symbols);
+                if (conflict) return conflict;
                 constexpr auto reduce_seq = ItemSet::reduce_seq();
-                constexpr auto table_b = gen_impl_b<table_a, idx>(reduce_seq);
-                constexpr auto table_c = gen_impl_c<table_b, idx>(next_symbols);
-                return gen_impl<table_c, idx + 1>();
+                conflict = gen_impl_reduce<idx>(table, reduce_seq);
+                if (conflict) return conflict;
+                if constexpr (ItemSet::template contains<
+                                  LRItem<extended_rule, 1>>()) {
+                    table.actions[idx][-1] = Action{Action::ACCEPT};
+                }
+                return gen_impl<idx + 1>(table);
+            }
+        }
+
+        static constexpr std::variant<Conflict, LRActionGotoTable>
+        gen_constexpr() noexcept {
+            LRActionGotoTable table{};
+            auto conflict = gen_impl<0>(table);
+            if (conflict) {
+                return *conflict;
+            } else {
+                return table;
             }
         }
 
         static constexpr auto gen() noexcept {
-            return gen_impl<LRActionGotoTable{}, 0>();
+            constexpr auto result = gen_constexpr();
+            static_assert(std::holds_alternative<LRActionGotoTable>(result),
+                          "Conflict detected!");
+            return std::get<LRActionGotoTable>(result);
         }
     };
 
