@@ -50,6 +50,23 @@ struct Conflict {
     enum Type { S_R, R_R } type;
     size_t state, symbol;
     Action action1, action2;
+
+    friend std::ostream &operator<<(std::ostream &os,
+                                    const Conflict &conflict) {
+        os << "Conflict: ";
+        switch (conflict.type) {
+        case S_R:
+            os << "Shift-Reduce";
+            break;
+        case R_R:
+            os << "Reduce-Reduce";
+            break;
+        }
+        os << " at state " << conflict.state << " with symbol "
+           << conflict.symbol << ":  " << conflict.action1.to_string() << " vs "
+           << conflict.action2.to_string();
+        return os;
+    }
 };
 
 template <size_t token_size> struct ActionTableLine {

@@ -12,25 +12,14 @@
 #include <vector>
 
 namespace ctslrp::details {
-constexpr std::string constexpr_to_string(size_t n) {
-    std::string str;
-    while (n) {
-        str.push_back('0' + n % 10);
-        n /= 10;
-    }
-    std::reverse(str.begin(), str.end());
-    return str;
-}
-
 struct Token {
     static constexpr size_t npos = -1;
+    static constexpr size_t error = -2;
     size_t token_id = npos;
     std::string_view value = "";
     size_t line = 0, column = 0;
     constexpr std::string to_string() const noexcept {
-        return (token_id == npos ? std::string("<error-token>")
-                                 : std::string(value)) +
-               " at " + constexpr_to_string(line) + ":" +
+        return std::string(value) + " at " + constexpr_to_string(line) + ":" +
                constexpr_to_string(column);
     }
     friend std::ostream &operator<<(std::ostream &os, const Token &token) {
@@ -49,7 +38,7 @@ template <typename Skip, typename... Re> class Lexer {
     template <size_t idx = 0>
     constexpr static Token match(std::string_view str) noexcept {
         if constexpr (idx == sizeof...(Re))
-            return Token{Token::npos, ""};
+            return Token{Token::error, str.substr(0, 1)};
         else {
             auto matched = RegexExp<idx>::starts_with(str);
             Token rest = match<idx + 1>(str);
@@ -79,6 +68,7 @@ template <typename Skip, typename... Re> class Lexer {
     constexpr static Token next(std::string_view input, size_t &pos) noexcept {
         pos += skip(input.substr(pos)).size();
         auto [line, column] = get_line_column(input.substr(0, pos));
+        if (pos >= input.size()) return Token{Token::npos, "EOF", line, column};
         Token token = match(input.substr(pos));
         token.line = line;
         token.column = column;

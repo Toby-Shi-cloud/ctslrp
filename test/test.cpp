@@ -1,4 +1,5 @@
 #include "ctslrp.hpp"
+#include <iostream>
 #include <string_view>
 #include <type_traits>
 
@@ -68,8 +69,8 @@ static inline void test_parser() {
         mulexp // MulExp -> MulExp * Num
             .define<Symbol::MUL, "*", Symbol::NUM>()
             .bind<int>([](int x, auto &&, int y) { return x * y; }),
-        number // Number -> r"[1-9][0-9]*"
-            .define<"[1-9][0-9]*"_r>()
+        number // Number -> r"[0-9]*"
+            .define<"[0-9]*"_r>()
             .bind<int>([](ctslrp::Token token) { return atoi(token.value); })
         // Syntex Table End
     );
@@ -78,9 +79,58 @@ static inline void test_parser() {
     static_assert(parser.parse("9999*9999") == 99980001);
 }
 
+static inline void test_parser_runtime() {
+    using namespace ctslrp::literals;
+    enum class Symbol { ADD, MUL, PRI, NUM };
+    ctslrp::SyntaxRuleGenerator<Symbol> gen;
+    constexpr auto addexp = gen.decl<Symbol::ADD>();
+    constexpr auto mulexp = gen.decl<Symbol::MUL>();
+    constexpr auto priexp = gen.decl<Symbol::PRI>();
+    constexpr auto number = gen.decl<Symbol::NUM>();
+    constexpr auto table = (
+        // Syntex Table Begin
+        addexp // AddExp -> MulExp
+            .define<Symbol::MUL>()
+            .bind<double>([](double x) { return x; }),
+        addexp // AddExp -> AddExp + MulExp
+            .define<Symbol::ADD, "+", Symbol::MUL>()
+            .bind<double>([](double x, auto &&, double y) { return x + y; }),
+        addexp // AddExp -> AddExp - MulExp
+            .define<Symbol::ADD, "-", Symbol::MUL>()
+            .bind<double>([](double x, auto &&, double y) { return x - y; }),
+        mulexp // MulExp -> Num
+            .define<Symbol::PRI>()
+            .bind<double>([](double x) { return x; }),
+        mulexp // MulExp -> MulExp * PriExp
+            .define<Symbol::MUL, "*", Symbol::PRI>()
+            .bind<double>([](double x, auto &&, double y) { return x * y; }),
+        mulexp // MulExp -> MulExp / PriExp
+            .define<Symbol::MUL, "/", Symbol::PRI>()
+            .bind<double>([](double x, auto &&, double y) { return x / y; }),
+        priexp // PriExp -> Num
+            .define<Symbol::NUM>()
+            .bind<double>([](double x) { return x; }),
+        priexp // PriExp -> ( AddExp )
+            .define<"(", Symbol::ADD, ")">()
+            .bind<double>([](auto &&, double y, auto &&) { return y; }),
+        number // Number -> r"[1-9][0-9]*"
+            .define<"[0-9]*"_r>()
+            .bind<double>([](auto &&token) { return std::atoi(token.value.data()); }),
+        number // Number -> r"[0-9]*.[0-9]*"
+            .define<"[0-9]*\\.[0-9]*"_r>()
+            .bind<double>([](auto &&token) { return std::atof(token.value.data()); })
+        // Syntex Table End
+    );
+    constexpr auto parser = table.compile<Symbol::ADD>();
+    std::cout << parser.parse("(1-0)*.3+4.1") << std::endl;
+    std::cout << parser.parse("(999*99)/(99*(99-9))") << std::endl;
+}
+
 int main() {
     test_type_map();
     test_regex();
     test_parser();
+    test_parser_runtime();
+    std::cout << "All tests passed!" << std::endl;
     return 0;
 }

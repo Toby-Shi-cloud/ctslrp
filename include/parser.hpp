@@ -2,18 +2,55 @@
 
 #include "lexer.hpp"
 #include "slr_action.hpp"
-#include "utils.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <functional>
+#include <ostream>
 #include <string>
 #include <string_view>
 #include <utility>
-#include <variant>
 #include <vector>
 
 namespace ctslrp::details {
+template <typename T> struct ParserResult {
+    enum { ERROR, RESULT } type;
+    union {
+        T result;
+        Token error;
+    };
+
+    constexpr ParserResult(T result) noexcept
+        : type(RESULT), result(std::move(result)) {}
+    constexpr ParserResult(Token error) noexcept
+        : type(ERROR), error(std::move(error)) {}
+
+    constexpr bool has_result() const noexcept { return type == RESULT; }
+    constexpr bool has_error() const noexcept { return type == ERROR; }
+
+    constexpr explicit operator bool() const noexcept { return has_result(); }
+    constexpr bool operator!() const noexcept { return has_error(); }
+
+    constexpr bool operator==(const T &other) const noexcept {
+        return has_result() && result == other;
+    }
+    constexpr bool operator!=(const T &other) const noexcept {
+        return !(*this == other);
+    }
+
+    constexpr std::string to_error_string() const noexcept {
+        return has_error() ? "error: " + error.to_string() : "";
+    }
+
+    friend std::ostream &operator<<(std::ostream &os,
+                                    const ParserResult &result) {
+        if (result)
+            return os << "ParserResult: " << result.result;
+        else
+            return os << "ParserResult: " << result.to_error_string();
+    }
+};
+
 /// The SLR(1) Parser.
 /// template parameters:
 /// * T: the type of the token value. (usually std::variant)
@@ -54,18 +91,17 @@ class Parser {
         Data data;
     };
 
-    constexpr __attribute__((always_inline))
-    std::variant<Result, string_literal<255>>
-    parse_impl(std::string_view input) const noexcept {
+    constexpr __attribute__((always_inline)) ParserResult<Result>
+    parse_impl(std::string_view input) const {
         std::vector<StackItem> stack{{0, {}, {}}};
         size_t state = 0, pos = 0;
         Token token = lexer.next(input, pos);
         while (true) {
+            if (token.token_id == Token::error) return token;
             const auto &action = table.actions[state][token.token_id];
             switch (action.type) {
             case Action::ERROR: {
-                auto error_msg = "unexpected token: " + token.to_string();
-                return string_literal<255>(error_msg);
+                return token;
             }
             case Action::SHIFT: {
                 stack.emplace_back(action.idx, Symbol{true, token.token_id},
@@ -91,7 +127,7 @@ class Parser {
                 stack.emplace_back(state, Symbol{false, symbol_id},
                                    std::move(result));
                 if (state == Goto::error)
-                    return string_literal<255>("unexpected goto error");
+                    throw std::runtime_error("Goto error");
                 break;
             }
             case Action::ACCEPT: {
@@ -106,13 +142,7 @@ class Parser {
         : binded_rule_table(std::move(binded_rule_table)) {}
 
     constexpr auto parse(std::string_view input) const {
-        auto result = parse_impl(input);
-        if (std::holds_alternative<Result>(result)) {
-            return std::get<Result>(std::move(result));
-        } else {
-            const char *msg = std::get<string_literal<255>>(result).data();
-            throw std::runtime_error(msg);
-        }
+        return parse_impl(input);
     }
 
     constexpr static auto get_slr_table() noexcept { return table; }

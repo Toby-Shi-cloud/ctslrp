@@ -1,12 +1,26 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
+#include <functional>
+#include <numeric>
 #include <ostream>
 #include <string_view>
 #include <type_traits>
 #include <utility>
 
 namespace ctslrp::details {
+constexpr std::string constexpr_to_string(size_t n) {
+    std::string str;
+    while (n) {
+        str.push_back('0' + n % 10);
+        n /= 10;
+    }
+    std::reverse(str.begin(), str.end());
+    return str;
+}
+
 /// a value wrapper of any type (convert constexpr value to type)
 template <auto v> struct value_wrapper {
     using type = decltype(v);
@@ -14,8 +28,18 @@ template <auto v> struct value_wrapper {
 };
 
 /// a sequence of any type
-template <auto... Ss> struct any_sequence {
-    static constexpr auto size = sizeof...(Ss);
+template <auto... values> struct any_sequence {
+    static constexpr auto size = sizeof...(values);
+
+    template <typename T> constexpr static auto as_array() noexcept {
+        return std::array<T, size>{values...};
+    }
+
+    friend std::ostream &operator<<(std::ostream &os, any_sequence) {
+        os << "any_sequence: ";
+        ((os << values << ", "), ...);
+        return os;
+    }
 };
 
 template <auto... I, auto... J>
@@ -23,11 +47,146 @@ constexpr auto operator+(any_sequence<I...>, any_sequence<J...>) {
     return any_sequence<I..., J...>{};
 }
 
-template <typename T, size_t... I, size_t... J>
-constexpr auto operator+(std::integer_sequence<T, I...>,
-                         std::integer_sequence<T, J...>) {
-    return std::integer_sequence<T, I..., J...>{};
+/// a sequence of fixed type
+template <typename T, T... values> struct typed_sequence {
+    using type = T;
+    static constexpr auto size = sizeof...(values);
+
+    constexpr typed_sequence() noexcept = default;
+
+    template <typename U>
+    constexpr typed_sequence(std::integer_sequence<U, values...>) noexcept {}
+
+    constexpr operator any_sequence<values...>() const noexcept { return {}; }
+
+    template <T... others>
+    friend constexpr auto operator+(typed_sequence<T, values...>,
+                                    typed_sequence<T, others...>) noexcept {
+        return typed_sequence<T, values..., others...>{};
+    }
+
+    constexpr static auto as_array() noexcept {
+        return std::array<T, size>{values...};
+    }
+
+    friend std::ostream &operator<<(std::ostream &os, typed_sequence) {
+        os << "typed_sequence: ";
+        ((os << values << ", "), ...);
+        return os;
+    }
+};
+template <typename Int, Int... vs>
+typed_sequence(std::integer_sequence<Int, vs...>) -> typed_sequence<Int, vs...>;
+
+namespace seq {
+template <size_t... Is> using index_sequence = typed_sequence<size_t, Is...>;
+
+template <std::array arr, size_t... I>
+constexpr auto array_as_sequence_impl(std::index_sequence<I...>) {
+    return typed_sequence<std::decay_t<decltype(arr[0])>, arr[I]...>{};
 }
+
+template <std::array arr, size_t size = arr.size()>
+constexpr auto array_as_sequence() {
+    constexpr auto index_seq = std::make_index_sequence<size>();
+    return array_as_sequence_impl<arr>(index_seq);
+}
+
+template <auto func = std::plus<>{}, typename T, T v, T... vs>
+constexpr auto reduce(typed_sequence<T, v, vs...>) noexcept {
+    constexpr auto array = std::array{vs...};
+    return std::reduce(std::begin(array), std::end(array), v, func);
+}
+
+template <typename Func, typename T, T v, T... vs>
+constexpr auto reduce(Func &&func, typed_sequence<T, v, vs...>) noexcept {
+    constexpr auto array = std::array{vs...};
+    return std::reduce(std::begin(array), std::end(array), v, func);
+}
+
+template <auto func = std::plus<>{}, auto value>
+constexpr auto reduce(any_sequence<value>) noexcept {
+    return value;
+}
+
+template <auto func = std::plus<>{}, auto v1, auto v2, auto... vs>
+constexpr auto reduce(any_sequence<v1, v2, vs...>) noexcept {
+    return reduce<func>(any_sequence<std::invoke(func, v1, v2), vs...>{});
+}
+
+template <auto func, typename T, T... vs>
+constexpr auto map(typed_sequence<T, vs...>) noexcept {
+    return typed_sequence<std::invoke_result_t<decltype(func), T>,
+                          std::invoke(func, vs)...>{};
+}
+
+template <auto func, auto... vs>
+constexpr auto map(any_sequence<vs...>) noexcept {
+    return any_sequence<std::invoke(func, vs)...>{};
+}
+
+template <typename Func, typename T, T... vs>
+constexpr auto map(Func &&func, typed_sequence<T, vs...>) noexcept {
+    return std::array{std::invoke(func, vs)...};
+}
+
+template <typename Func, auto... vs>
+constexpr auto map(Func &&func, any_sequence<vs...>) noexcept {
+    return std::array{std::invoke(func, vs)...};
+}
+
+template <typename Func, typename T, T... vs>
+constexpr auto for_each(Func &&func, typed_sequence<T, vs...>) noexcept {
+    (std::invoke(std::forward<Func>(func), vs), ...);
+}
+
+template <typename Func, auto... vs>
+constexpr auto for_each(Func &&func, any_sequence<vs...>) noexcept {
+    (std::invoke(std::forward<Func>(func), vs), ...);
+}
+
+template <template <auto> typename Wrapper, typename T, auto... vs>
+constexpr auto wrap(typed_sequence<T, vs...>) noexcept {
+    return any_sequence<Wrapper<vs>{}...>{};
+}
+
+template <template <auto> typename Wrapper, auto... vs>
+constexpr auto wrap(any_sequence<vs...>) noexcept {
+    return any_sequence<Wrapper<vs>{}...>{};
+}
+
+template <auto func, typename T, auto... vs>
+constexpr auto wrapped_map(typed_sequence<T, vs...>) noexcept {
+    return map<func>(any_sequence<value_wrapper<vs>{}...>{});
+}
+
+template <auto func, auto... vs>
+constexpr auto wrapped_map(any_sequence<vs...>) noexcept {
+    return map<func>(any_sequence<value_wrapper<vs>{}...>{});
+}
+
+template <typename Func, typename T, auto... vs>
+constexpr auto wrapped_map(Func &&func, typed_sequence<T, vs...>) noexcept {
+    return map(func, any_sequence<value_wrapper<vs>{}...>{});
+}
+
+template <typename Func, auto... vs>
+constexpr auto wrapped_map(Func &&func, any_sequence<vs...>) noexcept {
+    return map(func, any_sequence<value_wrapper<vs>{}...>{});
+}
+
+template <typename T, size_t N>
+constexpr auto sorted(std::array<T, N> arr) noexcept {
+    std::sort(arr.begin(), arr.end());
+    return arr;
+}
+
+template <typename T, T... vs>
+constexpr auto sorted(typed_sequence<T, vs...>) noexcept {
+    constexpr auto arr = typed_sequence<T, vs...>::as_array();
+    return array_as_sequence<sorted(arr)>();
+}
+} // namespace seq
 
 /// a string literal with fixed size
 template <size_t N> struct string_literal {

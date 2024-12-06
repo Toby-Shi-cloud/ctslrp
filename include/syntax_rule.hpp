@@ -129,9 +129,9 @@ template <typename SymbolEnum> class SyntaxRuleGenerator {
             if constexpr (well_formed<typename R::Symbol,
                                       typename R::BindType>()) {
                 using RuleTable = BindedRuleTable<Rules..., R>;
-                return RuleTable{
-                    std::tuple_cat(static_cast<tuple &&>(std::move(table.m_rules)),
-                                   std::make_tuple(std::move(rule)))};
+                return RuleTable{std::tuple_cat(
+                    static_cast<tuple &&>(std::move(table.m_rules)),
+                    std::make_tuple(std::move(rule)))};
             } else {
                 constexpr auto msg =
                     "Symbol `"_raw + valuename_of<R::Symbol::value>() +
@@ -267,7 +267,8 @@ template <typename SymbolEnum> class SyntaxRuleGenerator {
             static_assert(idx < sizeof...(Rules), "idx out of range");
             constexpr size_t size = sizeof...(Args);
             if constexpr (size == rule_t<idx>::statement_size) {
-                return std::get<idx>(m_rules).call(std::forward<Args>(args)...);
+                return (typename rule_t<idx>::BindType)(
+                    std::get<idx>(m_rules).call(std::forward<Args>(args)...));
             } else if constexpr (is_regex_v<typename rule_t<
                                      idx>::template Statement<size>>) {
                 using T = BindedTypeHelper::P;
@@ -312,7 +313,7 @@ template <typename SymbolEnum> class SyntaxRuleGenerator {
             using Parser =
                 Parser<Result, BindedTypeVariant, lexer, rule_reduce_to,
                        rule_sizes, table.lr_action_goto_table, BindedRuleTable>;
-            return Parser{std::move(*this)};
+            return Parser{*this};
         }
     };
     template <typename... Rules>
