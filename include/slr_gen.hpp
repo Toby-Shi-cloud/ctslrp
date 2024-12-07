@@ -1,7 +1,6 @@
 #pragma once
 
 #include "slr_action.hpp"
-#include "type_map.hpp"
 #include "utils.hpp"
 #include <algorithm>
 #include <array>
@@ -16,13 +15,9 @@
 
 namespace ctslrp::details::slr_gen {
 struct Terminal {
-    size_t id;
-    constexpr bool operator==(Terminal other) const noexcept {
-        return id == other.id;
-    }
-    constexpr bool operator!=(Terminal other) const noexcept {
-        return id != other.id;
-    }
+    size_t id = 0;
+    constexpr bool operator==(const Terminal &other) const noexcept = default;
+    constexpr auto operator<=>(const Terminal &other) const noexcept = default;
     friend std::ostream &operator<<(std::ostream &os, Terminal t) {
         if (t.id == size_t(-1)) return os << "#";
         if (t.id == size_t(-2)) return os << "ε";
@@ -30,13 +25,11 @@ struct Terminal {
     }
 };
 struct NonTerminal {
-    size_t id;
-    constexpr bool operator==(NonTerminal other) const noexcept {
-        return id == other.id;
-    }
-    constexpr bool operator!=(NonTerminal other) const noexcept {
-        return id != other.id;
-    }
+    size_t id = 0;
+    constexpr bool
+    operator==(const NonTerminal &other) const noexcept = default;
+    constexpr auto
+    operator<=>(const NonTerminal &other) const noexcept = default;
     friend std::ostream &operator<<(std::ostream &os, NonTerminal t) {
         return os << "S" << t.id;
     }
@@ -94,7 +87,7 @@ template <NonTerminal symbol, auto... exps> struct SimplifiedRule;
 template <NonTerminal start_symbol, typename... Rules>
 struct SimplifiedRuleTable;
 /// The Terminal Set (First/Follow Set)
-template <Terminal... ts> struct TerminalSet;
+template <size_t N> struct TerminalSet;
 } // namespace ctslrp::details::slr_gen
 
 // type traits
@@ -197,126 +190,15 @@ struct SimplifiedRuleTable {
     using rule_t =
         std::tuple_element_t<idx, std::tuple<Rules..., extended_rule>>;
 
-    struct FirstSetHelper {
-        template <typename TMap, typename Rule>
-        static constexpr auto calc_value() noexcept {
-            /// key of this rule's non-terminal
-            using key = value_wrapper<Rule::non_terminal>;
-            /// current first set
-            using current = TMap::template ValueOrDefault<key, TerminalSet<>>;
-            if constexpr (Rule::statement_size == 0) {
-                return current::template add<epsilon>();
-            } else {
-                constexpr auto first = std::get<0>(Rule::statements);
-                if constexpr (std::is_same_v<std::decay_t<decltype(first)>,
-                                             Terminal>) {
-                    return current::template add<first>();
-                } else {
-                    using that = value_wrapper<first>;
-                    using set =
-                        TMap::template ValueOrDefault<that, TerminalSet<>>;
-                    return current{} + set{};
-                }
-            }
-        }
+    static constexpr auto rule_lengths = seq::wrapped_map(
+        [](auto wrapped) {
+            using rule = rule_t<decltype(wrapped)::value>;
+            return rule::statement_size;
+        },
+        typed_sequence(std::make_index_sequence<rule_size + 1>()));
 
-        template <typename TMap, size_t idx = 0>
-        static constexpr auto calc_impl() noexcept {
-            if constexpr (idx == rule_size) {
-                using key = value_wrapper<extended_grammar>;
-                using ret = decltype(calc_value<TMap, extended_rule>());
-                using new_map = decltype(TMap::template set<key, ret>());
-                return new_map{};
-            } else {
-                using key = value_wrapper<rule_t<idx>::non_terminal>;
-                using ret = decltype(calc_value<TMap, rule_t<idx>>());
-                using new_map = decltype(TMap::template set<key, ret>());
-                return calc_impl<new_map, idx + 1>();
-            }
-        }
-
-        template <typename TMap = TypeMap<>, size_t depth = 0>
-        static constexpr auto calc() noexcept {
-            static_assert(depth < 5, "FirstSet calculation too deep");
-            using ret = decltype(calc_impl<TMap>());
-            if constexpr (std::is_same_v<TMap, ret>) {
-                return ret{};
-            } else {
-                return calc<ret, depth + 1>();
-            }
-        }
-    };
-    using FirstSet = decltype(FirstSetHelper::calc());
-
-    struct FollowSetHelper {
-        template <typename TMap, typename Rule,
-                  size_t idx = Rule::statement_size,
-                  typename first_set = TerminalSet<>, bool nullable = true>
-        static constexpr auto calc_value() noexcept {
-            if constexpr (idx == 0) {
-                return TMap{};
-            } else {
-                constexpr auto symbol = std::get<idx - 1>(Rule::statements);
-                using symbol_t = std::decay_t<decltype(symbol)>;
-                if constexpr (std::is_same_v<symbol_t, Terminal>) {
-                    return calc_value<TMap, Rule, idx - 1, TerminalSet<symbol>,
-                                      false>();
-                } else {
-                    using key = value_wrapper<symbol>;
-                    using key_first = FirstSet::template ValueOf<key>;
-                    using current =
-                        TMap::template ValueOrDefault<key, TerminalSet<>>;
-                    using new_set = decltype(current{} + first_set{});
-                    constexpr bool next_nullable = key_first::contains(epsilon);
-                    using next_first = std::conditional_t<
-                        next_nullable,
-                        decltype(decltype(first_set{} + key_first{})::
-                                     template remove<epsilon>()),
-                        key_first>;
-                    if constexpr (nullable) {
-                        using follow_of_rule = TMap::template ValueOrDefault<
-                            value_wrapper<Rule::non_terminal>, TerminalSet<>>;
-                        using new_new_set =
-                            decltype(new_set{} + follow_of_rule{});
-                        return calc_value<
-                            decltype(TMap::template set<key, new_new_set>()),
-                            Rule, idx - 1, next_first, next_nullable>();
-                    } else {
-                        return calc_value<
-                            decltype(TMap::template set<key, new_set>()), Rule,
-                            idx - 1, next_first, next_nullable>();
-                    }
-                }
-            }
-        }
-
-        template <typename TMap, size_t idx = 0>
-        static constexpr auto calc_impl() noexcept {
-            if constexpr (idx == rule_size) {
-                using key = value_wrapper<extended_grammar>;
-                using new_map = decltype(calc_value<TMap, extended_rule>());
-                return new_map{};
-            } else {
-                using key = value_wrapper<rule_t<idx>::non_terminal>;
-                using new_map = decltype(calc_value<TMap, rule_t<idx>>());
-                return calc_impl<new_map, idx + 1>();
-            }
-        }
-
-        template <typename TMap = TypeMap<TypeMapEntry<
-                      value_wrapper<extended_grammar>, TerminalSet<sharp>>>,
-                  size_t depth = 0>
-        static constexpr auto calc() noexcept {
-            static_assert(depth < 5, "FollowSet calculation too deep");
-            using ret = decltype(calc_impl<TMap>());
-            if constexpr (std::is_same_v<TMap, ret>) {
-                return ret{};
-            } else {
-                return calc<ret, depth + 1>();
-            }
-        }
-    };
-    using FollowSet = decltype(FollowSetHelper::calc());
+    static constexpr auto non_tenminals =
+        std::array{Rules::non_terminal..., extended_grammar};
 
     struct LRItem {
         size_t rule_idx;
@@ -401,9 +283,6 @@ struct SimplifiedRuleTable {
         }
     };
 
-    static constexpr auto non_tenminals =
-        std::array{Rules::non_terminal..., extended_grammar};
-
     static constexpr auto next_symbol_of = seq::wrapped_map(
         [](auto rule_idx) {
             return seq::wrapped_map(
@@ -424,6 +303,146 @@ struct SimplifiedRuleTable {
             auto sym = next_symbol_of[item.rule_idx][i];
             if (sym.type == SymbolT::ERROR) break;
             os << ' ' << sym;
+        }
+        return os;
+    }
+
+    struct FirstSetHelper {
+        static constexpr auto calc_impl() noexcept {
+            std::array<std::vector<Terminal>, max_symbol_id() + 2> first_set;
+            bool changed = true;
+            while (changed) {
+                changed = false;
+                for (size_t i = 0; i <= rule_size; i++) {
+                    auto symbol = non_tenminals[i];
+                    auto first = next_symbol_of[i][0];
+                    auto &set = first_set[symbol.id];
+                    auto ori_size = set.size();
+                    if (first.type == SymbolT::TERMINAL) {
+                        set.push_back(Terminal{first.id});
+                    } else if (first.type == SymbolT::NONTERMINAL) {
+                        auto &first_of_rule = first_set[first.id];
+                        set.insert(set.end(), first_of_rule.begin(),
+                                   first_of_rule.end());
+                    } else {
+                        set.push_back(epsilon);
+                    }
+                    std::sort(set.begin(), set.end());
+                    auto new_size =
+                        std::unique(set.begin(), set.end()) - set.begin();
+                    set.resize(new_size);
+                    if (new_size != ori_size) changed = true;
+                }
+            }
+            return first_set;
+        }
+
+        static constexpr auto get_size() noexcept {
+            auto first_set = calc_impl();
+            return std::max_element(
+                       first_set.begin(), first_set.end(),
+                       [](auto &x, auto &y) { return x.size() < y.size(); })
+                ->size();
+        }
+
+        static constexpr auto calc() noexcept {
+            constexpr auto size = get_size();
+            auto first_set = calc_impl();
+            std::array<TerminalSet<size>, first_set.size()> result;
+            for (size_t i = 0; i < first_set.size(); i++) {
+                std::copy(first_set[i].begin(), first_set[i].end(),
+                          result[i].begin());
+                result[i].actual_size = first_set[i].size();
+            }
+            return result;
+        }
+    };
+    static constexpr auto FirstSet = FirstSetHelper::calc();
+
+    struct FollowSetHelper {
+        static constexpr auto calc_impl() noexcept {
+            std::array<std::vector<Terminal>, max_symbol_id() + 2> follow_set;
+            follow_set[extended_grammar.id].push_back(sharp);
+            bool changed = true;
+            while (changed) {
+                changed = false;
+                for (size_t i = 0; i <= rule_size; i++) {
+                    /// A -> αBβ
+                    bool could_epsilon = true; // first(β) contains ε
+                    // follow(β) += follow(A)
+                    auto current_follow = follow_set[non_tenminals[i].id];
+                    for (ssize_t j = rule_lengths[i] - 1; j >= 0; j--) {
+                        auto sym = next_symbol_of[i][j]; // B
+                        if (sym.type != SymbolT::NONTERMINAL) continue;
+                        auto &set = follow_set[sym.id];
+                        auto ori_size = set.size();
+                        auto nxt = next_symbol_of[i][j + 1];
+                        if (nxt.type == SymbolT::NONTERMINAL) {
+                            // first(β)
+                            auto &first_of_rule = FirstSet[nxt.id];
+                            could_epsilon &= first_of_rule.contains(epsilon);
+                            for (auto &t : first_of_rule) {
+                                if (t != epsilon) {
+                                    // follow(B) += first(β) - ε
+                                    set.push_back(t);
+                                    current_follow.push_back(t);
+                                }
+                            }
+                        } else if (nxt.type == SymbolT::TERMINAL) {
+                            set.push_back(Terminal{nxt.id}); // first(β)
+                            could_epsilon = false;
+                        }
+                        if (could_epsilon) {
+                            // if first(β) contains ε,
+                            // follow(B) += follow(β)
+                            for (auto &t : current_follow)
+                                set.push_back(t);
+                        }
+                        std::sort(set.begin(), set.end());
+                        auto new_size =
+                            std::unique(set.begin(), set.end()) - set.begin();
+                        set.resize(new_size);
+                        if (new_size != ori_size) changed = true;
+                    }
+                }
+            }
+            return follow_set;
+        }
+
+        static constexpr auto get_size() noexcept {
+            auto follow_set = calc_impl();
+            return std::max_element(
+                       follow_set.begin(), follow_set.end(),
+                       [](auto &x, auto &y) { return x.size() < y.size(); })
+                ->size();
+        }
+
+        static constexpr auto calc() noexcept {
+            constexpr auto size = get_size();
+            auto follew_set = calc_impl();
+            std::array<TerminalSet<size>, follew_set.size()> result;
+            for (size_t i = 0; i < follew_set.size(); i++) {
+                std::copy(follew_set[i].begin(), follew_set[i].end(),
+                          result[i].begin());
+                result[i].actual_size = follew_set[i].size();
+            }
+            return result;
+        }
+    };
+    static constexpr auto FollowSet = FollowSetHelper::calc();
+
+    static std::ostream &print_first_set(std::ostream &os) {
+        os << "First Set:\n";
+        for (size_t i = 0; i < FirstSet.size(); i++) {
+            os << NonTerminal{i} << ": " << FirstSet[i] << '\n';
+        }
+        return os;
+    }
+
+    static std::ostream &print_follow_set(std::ostream &os) {
+        os << "Follow Set:\n";
+        for (size_t i = 0; i < FollowSet.size(); i++) {
+            os << NonTerminal{i} << ": " << FollowSet[i] << '\n';
         }
         return os;
     }
@@ -747,23 +766,24 @@ struct SimplifiedRuleTable {
             return gen_impl_nxt<idx>(table, any_sequence<rest...>{});
         }
 
-        template <size_t i, size_t val, Terminal... follows>
+        template <size_t i, size_t val, size_t N>
         static constexpr std::optional<Conflict>
         gen_impl_reduce_set_follows(LRActionGotoTable &table,
-                                    TerminalSet<follows...>) noexcept {
-            return (
-                (table.actions[i][follows.id].type != Action::ERROR
-                     ? std::optional(Conflict{
-                           table.actions[i][follows.id].type == Action::SHIFT
-                               ? Conflict::S_R
-                               : Conflict::R_R,
-                           i,
-                           follows.id,
-                           table.actions[i][follows.id],
-                           {Action::REDUCE, val}})
-                     : (table.actions[i][follows.id] = {Action::REDUCE, val},
-                        std::nullopt)) |
-                ...);
+                                    const TerminalSet<N> &follow_set) noexcept {
+            for (auto &follow : follow_set) {
+                auto &action = table.actions[i][follow.id];
+                Action new_action = {Action::REDUCE, val};
+                if (action.type != Action::ERROR) {
+                    auto conflict_t = action.type == Action::SHIFT
+                                          ? Conflict::S_R
+                                          : Conflict::R_R;
+                    return Conflict{conflict_t, i, follow.id, action,
+                                    new_action};
+                } else {
+                    action = new_action;
+                };
+            }
+            return std::nullopt;
         }
 
         template <size_t idx>
@@ -776,10 +796,9 @@ struct SimplifiedRuleTable {
         gen_impl_reduce(LRActionGotoTable &table,
                         seq::index_sequence<rule_id, rest...>) noexcept {
             using rule = rule_t<rule_id>;
-            using follow_set =
-                FollowSet::template ValueOf<value_wrapper<rule::non_terminal>>;
+            auto &follow_set = FollowSet[rule::non_terminal.id];
             auto conflict =
-                gen_impl_reduce_set_follows<idx, rule_id>(table, follow_set{});
+                gen_impl_reduce_set_follows<idx, rule_id>(table, follow_set);
             if (conflict) return conflict;
             return gen_impl_reduce<idx>(table, seq::index_sequence<rest...>{});
         }
@@ -836,42 +855,37 @@ struct SimplifiedRuleTable {
     }
 };
 
-template <Terminal... ts> struct TerminalSet {
-    static constexpr size_t size() noexcept { return sizeof...(ts); }
-    static constexpr bool contains(Terminal t) noexcept {
-        return ((t == ts) || ...);
-    }
-    template <Terminal t> constexpr static auto remove() noexcept {
-        if constexpr (!contains(t)) {
-            return TerminalSet<ts...>{};
-        } else {
-            return remove_impl<t, ts...>();
-        }
-    }
-    template <Terminal t> constexpr static auto add() noexcept {
-        if constexpr (contains(t)) {
-            return TerminalSet<ts...>{};
-        } else {
-            return TerminalSet<ts..., t>{};
-        }
-    }
-    constexpr auto operator+(TerminalSet<>) const noexcept { return *this; }
-    template <Terminal o, Terminal... os>
-    constexpr auto operator+(TerminalSet<o, os...>) const noexcept {
-        return add<o>() + TerminalSet<os...>{};
+template <size_t N> struct TerminalSet {
+    std::array<Terminal, N> data;
+    size_t actual_size;
+
+    constexpr TerminalSet() noexcept = default;
+    constexpr TerminalSet(std::array<Terminal, N> array) noexcept
+        : data(seq::sorted(array)), actual_size(N) {}
+    constexpr explicit TerminalSet(const std::vector<Terminal> &vec) noexcept
+        : actual_size(vec.size()) {
+        std::copy(vec.begin(), vec.end(), data.begin());
+        std::sort(data.begin(), data.begin() + actual_size);
     }
 
- private:
-    template <Terminal> constexpr static auto remove_impl() noexcept {
-        return TerminalSet<>{};
+    constexpr auto begin() const noexcept { return data.begin(); }
+    constexpr auto end() const noexcept { return data.begin() + actual_size; }
+    constexpr auto begin() noexcept { return data.begin(); }
+    constexpr auto end() noexcept { return data.begin() + actual_size; }
+
+    constexpr bool contains(Terminal t) const noexcept {
+        auto it = std::lower_bound(begin(), end(), t);
+        return it != data.end() && *it == t;
     }
-    template <Terminal value, Terminal item, Terminal... rest>
-    constexpr static auto remove_impl() noexcept {
-        if constexpr (value == item) {
-            return TerminalSet<rest...>{};
-        } else {
-            return TerminalSet<item>{} + remove_impl<value, rest...>();
+
+    friend std::ostream &operator<<(std::ostream &os, TerminalSet set) {
+        os << "{";
+        for (auto &t : set) {
+            os << t << ",}"[&t + 1 == set.end()];
         }
+        if (set.actual_size == 0) os << "}";
+        return os;
     }
 };
+template <size_t N> TerminalSet(std::array<Terminal, N>) -> TerminalSet<N>;
 } // namespace ctslrp::details::slr_gen

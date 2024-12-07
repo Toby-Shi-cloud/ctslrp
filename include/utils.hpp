@@ -79,6 +79,8 @@ template <typename Int, Int... vs>
 typed_sequence(std::integer_sequence<Int, vs...>) -> typed_sequence<Int, vs...>;
 
 namespace seq {
+using ::ctslrp::details::any_sequence;
+using ::ctslrp::details::typed_sequence;
 template <size_t... Is> using index_sequence = typed_sequence<size_t, Is...>;
 
 template <std::array arr, size_t... I>
@@ -133,6 +135,11 @@ constexpr auto map(Func &&func, typed_sequence<T, vs...>) noexcept {
 template <typename Func, auto... vs>
 constexpr auto map(Func &&func, any_sequence<vs...>) noexcept {
     return std::array{std::invoke(func, vs)...};
+}
+
+template <typename Func, typename... Ts>
+constexpr auto for_each(Func &&func, Ts &&...vs) noexcept {
+    (std::invoke(std::forward<Func>(func), vs), ...);
 }
 
 template <typename Func, typename T, T... vs>

@@ -50,10 +50,16 @@ template <typename SymbolEnum> class SyntaxRuleGenerator {
 
     template <typename Sym, typename... Stat> struct GeneratedRule {
         /// Bind a function to the rule
-        template <typename BindT, typename Func>
+        template <typename BindT = std::monostate, typename Func>
         constexpr auto bind(Func &&func) const {
             using Bind = BindedRule<Sym, BindT, Func, Stat...>;
             return Bind{std::forward<Func>(func)};
+        }
+        template <typename BindT = std::monostate> constexpr auto bind() const {
+            constexpr auto func = [](auto &&...) { return BindT{}; };
+            using Func = std::decay_t<decltype(func)>;
+            using Bind = BindedRule<Sym, BindT, Func, Stat...>;
+            return Bind{func};
         }
     };
 
@@ -82,8 +88,15 @@ template <typename SymbolEnum> class SyntaxRuleGenerator {
             return std::invoke(func, std::forward<Args>(args)...);
         }
 
+        template <typename T>
+        friend constexpr auto operator,(const BindedRule &r1, T &&) noexcept {
+            static_assert(sizeof(T) == 0,
+                          "connat aplly ',' to type other than BindedRule");
+        }
+
         template <typename... Ts>
-        friend constexpr auto operator,(BindedRule r1, BindedRule<Ts...> r2) {
+        friend constexpr auto operator,(BindedRule r1,
+                                        BindedRule<Ts...> r2) noexcept {
             using R = BindedRule<Ts...>;
             if constexpr (std::is_same_v<Symbol, typename R::Symbol> &&
                           !std::is_same_v<BindType, typename R::BindType>) {
@@ -122,9 +135,16 @@ template <typename SymbolEnum> class SyntaxRuleGenerator {
         explicit constexpr BindedRuleTable(tuple &&t) : m_rules(std::move(t)) {}
         explicit constexpr BindedRuleTable(const tuple &t) : m_rules(t) {}
 
+        template <typename T>
+        friend constexpr auto operator,(const BindedRuleTable &,
+                                        T &&) noexcept {
+            static_assert(sizeof(T) == 0,
+                          "connat aplly ',' to type other than BindedRule");
+        }
+
         template <typename... Ts>
         friend constexpr auto operator,(BindedRuleTable table,
-                                        BindedRule<Ts...> rule) {
+                                        BindedRule<Ts...> rule) noexcept {
             using R = BindedRule<Ts...>;
             if constexpr (well_formed<typename R::Symbol,
                                       typename R::BindType>()) {
@@ -219,13 +239,6 @@ template <typename SymbolEnum> class SyntaxRuleGenerator {
                 sym, decltype(simpilify_rule<Rules>())...>{};
         }
 
-        template <SymbolEnum symbol> constexpr static auto compile_impl() {
-            using Re = TokenMap::Keys;
-            auto lexer = Lexer("\\s"_r, Re{});
-            auto table = simpilify_rule_table<symbol>();
-            return std::make_pair(lexer, table);
-        }
-
      private:
         struct BindedTypeHelper {
             using P = Token;
@@ -299,10 +312,20 @@ template <typename SymbolEnum> class SyntaxRuleGenerator {
         }
 
      public:
+        template <SymbolEnum symbol> constexpr static auto compile_lexer() {
+            using Re = TokenMap::Keys;
+            auto lexer = Lexer("\\s"_r, Re{});
+            return lexer;
+        }
+
+        template <SymbolEnum symbol> constexpr static auto compile_lrtable() {
+            auto table = simpilify_rule_table<symbol>();
+            return table;
+        }
+
         template <SymbolEnum symbol> constexpr auto compile() const {
-            constexpr auto lexer_and_table = compile_impl<symbol>();
-            constexpr auto lexer = lexer_and_table.first;
-            constexpr auto table = lexer_and_table.second;
+            constexpr auto lexer = compile_lexer<symbol>();
+            constexpr auto table = compile_lrtable<symbol>();
             using Result =
                 BindedTypeMap::template ValueOf<value_wrapper<symbol>>;
             constexpr std::array rule_reduce_to{

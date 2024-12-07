@@ -122,8 +122,8 @@ static inline void test_parser_runtime() {
         // Syntex Table End
     );
     constexpr auto parser = table.compile<Symbol::ADD>();
-    std::cout << parser.parse("(1-0)*.3+4.1") << std::endl;
-    std::cout << parser.parse("(999*99)/(99*(99-9))") << std::endl;
+    std::cout << parser.parse("(1-0)*.3+4.1") << std::endl;         // 4.4
+    std::cout << parser.parse("(999*99)/(99*(99-9))") << std::endl; // 11.1
 }
 
 int main() {
