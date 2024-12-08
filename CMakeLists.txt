@@ -8,3 +8,4 @@ include_directories(lib/ctre/single-header)
 include_directories(include)
 
 add_executable(test test/test.cpp)
+add_executable(new-test test/new-test.cpp)
